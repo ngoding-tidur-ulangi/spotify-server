@@ -1,6 +1,5 @@
 import express from 'express'
 import passport from 'passport'
-import session from 'express-session'
 import dotenv from "dotenv"
 import cors from "cors"
 import authRouter from './routes/auth'
@@ -9,7 +8,8 @@ import User from './models/user'
 import artistRouter from './routes/artist'
 import songRouter from './routes/song'
 import globalRouter from './routes/global'
-import sessionValidation from './middlewares/sessionValidation'
+import jwt from 'jsonwebtoken'
+import authentication from './middlewares/authentication'
 const GoogleStrategy = require('passport-google-oauth20').Strategy
 
 dotenv.config()
@@ -31,9 +31,6 @@ app.use(
         credentials: true,
     }),
 )
-app.use(session({ secret: 'secret', resave: false, saveUninitialized: true }))
-app.use(passport.initialize())
-app.use(passport.session())
 app.use(express.json())
 
 passport.use(new GoogleStrategy({
@@ -42,6 +39,8 @@ passport.use(new GoogleStrategy({
     callbackURL: '/auth/google/callback',
     scope: ["profile", "email"]
 }, async (accessToken, refreshToken, profile, done) => {
+    console.log(`google: `)
+    console.log(profile)
     let user = await User.findOne({ googleId: profile.id });
 
     if (!user) {
@@ -55,29 +54,24 @@ passport.use(new GoogleStrategy({
         });
         await user.save();
     }
-    return done(null, user);
+    const token = jwt.sign({ id: user._id }, process.env.SECRET_KEY, { expiresIn: '1h' });
+    return done(null, { user, token });
 }))
 
-passport.serializeUser((user, done) => done(null, (user as any).id))
-passport.deserializeUser(async (id, done) => {
-    try {
-        const user = await User.findById(id);
-        done(null, user);
-    } catch (error) {
-        done(error, null);
-    }
+app.get("/", (_, res) => res.send("Hello World"))
+app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+app.get("/auth/google/callback", passport.authenticate("google", { session: false }), (req, res) => {
+    const { token } = (req.user as any);
+    const clientUrl = `${process.env.CLIENT_URL}?token=${token}`;
+    res.redirect(clientUrl);
 })
-app.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }))
-app.get("/auth/google/callback", passport.authenticate("google", {
-    successRedirect: process.env.CLIENT_URL,
-    failureRedirect: `${process.env.CLIENT_URL}/error`
-}))
-app.use(sessionValidation)
-app.use("/song", songRouter)
-app.use("/auth", authRouter)
-app.use("/global", globalRouter)
-app.use("/artist", artistRouter)
 
-app.listen(3000, () => {
-    console.log(`server start at 3000 no 3000`)
+app.use("/global", globalRouter)
+app.use(authentication)
+app.use("/song", songRouter)
+app.use("/artist", artistRouter)
+app.use("/auth", authRouter)
+
+app.listen(process.env.PORT || 8080, () => {
+    console.log(`server start at 8080 no 8080`)
 })
